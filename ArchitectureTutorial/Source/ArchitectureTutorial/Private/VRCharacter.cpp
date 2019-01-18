@@ -12,8 +12,11 @@ AVRCharacter::AVRCharacter()
 	PrimaryActorTick.bCanEverTick = true;
 
 	// Creating the Camera Component for the Character, which is what the HMD is seeing
+	VRRoot = CreateDefaultSubobject<USceneComponent>(FName("VRRoot"));
+	VRRoot->SetupAttachment(GetRootComponent());
+
 	Camera = CreateDefaultSubobject<UCameraComponent>(FName("Camera"));
-	Camera->SetupAttachment(GetRootComponent());
+	Camera->SetupAttachment(VRRoot);
 }
 
 // Called when the game starts or when spawned
@@ -27,7 +30,11 @@ void AVRCharacter::BeginPlay()
 void AVRCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
+	
+	FVector NewCameraOffset = Camera->GetComponentLocation() - GetActorLocation();
+	NewCameraOffset.Z = 0; //making sure the character doesn't move up and down
+	AddActorWorldOffset(NewCameraOffset);
+	VRRoot->AddWorldOffset(-NewCameraOffset);
 }
 
 // Called to bind functionality to input

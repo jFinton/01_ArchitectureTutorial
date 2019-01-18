@@ -28,6 +28,7 @@ public:
 
 private:
 	class UCameraComponent* Camera;
+	class USceneComponent* VRRoot;
 
 	void MoveForward(float throttle);
 	void MoveRight(float throttle);
