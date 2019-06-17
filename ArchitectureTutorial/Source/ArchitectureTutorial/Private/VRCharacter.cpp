@@ -3,6 +3,8 @@
 #include "VRCharacter.h"
 #include "Runtime/Engine/Classes/Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
 
 
 // Sets default values
@@ -17,12 +19,17 @@ AVRCharacter::AVRCharacter()
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(FName("Camera"));
 	Camera->SetupAttachment(VRRoot);
+
+	DestinationMarker = CreateDefaultSubobject<UStaticMeshComponent>(FName("Marker"));
+	DestinationMarker->SetupAttachment(GetRootComponent());
 }
 
 // Called when the game starts or when spawned
 void AVRCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	DestinationMarker->SetVisibility(false);
 	
 }
 
@@ -35,6 +42,28 @@ void AVRCharacter::Tick(float DeltaTime)
 	NewCameraOffset.Z = 0; //making sure the character doesn't move up and down
 	AddActorWorldOffset(NewCameraOffset);
 	VRRoot->AddWorldOffset(-NewCameraOffset);
+
+	UpdateDestinationMarker();
+}
+
+
+void AVRCharacter::UpdateDestinationMarker()
+{
+	FVector Start = Camera->GetComponentLocation();
+	FVector End = Start + Camera->GetForwardVector() * MaxTeleportDistance;
+
+	FHitResult HitResult;
+	bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility);
+
+	if (bHit)
+	{
+		DestinationMarker->SetVisibility(true);
+		DestinationMarker->SetWorldLocation(HitResult.Location);
+	} 
+	else
+	{
+		DestinationMarker->SetVisibility(false);
+	}
 }
 
 // Called to bind functionality to input
