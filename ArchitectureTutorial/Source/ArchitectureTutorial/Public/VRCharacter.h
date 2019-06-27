@@ -36,15 +36,24 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	class UStaticMeshComponent* DestinationMarker;
 
-
+	bool FindTeleportDestination(FVector &OutLocation);
 	void UpdateDestinationMarker();
 
 	void MoveForward(float throttle);
 	void MoveRight(float throttle);
+	void BeginTeleport();
+	void EndTeleport();
+
+	void StartFade(float FromAlpha, float ToAlpha);
 
 private:
 	UPROPERTY(EditAnywhere)
 	float MaxTeleportDistance = 1000;
+
+	UPROPERTY(EditAnywhere)
+	float TeleportFadeTime = 0.5;
 	
+	UPROPERTY(EditAnywhere)
+	FVector TeleportProjectionExtent = FVector(100, 100, 100);
 
 };
