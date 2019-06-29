@@ -7,6 +7,9 @@
 #include "Runtime/Engine/Public/TimerManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Runtime/NavigationSystem/Public/NavigationSystem.h"
+#include "GameFramework/PlayerController.h"
+#include "Components/PostProcessComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 
 
@@ -25,6 +28,9 @@ AVRCharacter::AVRCharacter()
 
 	DestinationMarker = CreateDefaultSubobject<UStaticMeshComponent>(FName("Marker"));
 	DestinationMarker->SetupAttachment(GetRootComponent());
+
+	PostProcessingComponent = CreateDefaultSubobject<UPostProcessComponent>(FName("PostProcessingComponent"));
+	PostProcessingComponent->SetupAttachment(GetRootComponent());
 }
 
 // Called when the game starts or when spawned
@@ -33,6 +39,12 @@ void AVRCharacter::BeginPlay()
 	Super::BeginPlay();
 
 	DestinationMarker->SetVisibility(false);
+
+	if (BlinkerMaterialBase != nullptr)
+	{
+		BlinkerMaterialInstance = UMaterialInstanceDynamic::Create(BlinkerMaterialBase, this);
+		PostProcessingComponent->AddOrUpdateBlendable(BlinkerMaterialInstance);
+	}
 	
 }
 
@@ -47,6 +59,7 @@ void AVRCharacter::Tick(float DeltaTime)
 	VRRoot->AddWorldOffset(-NewCameraOffset);
 
 	UpdateDestinationMarker();
+	//UpdateBlinkers();
 }
 
 
@@ -87,6 +100,55 @@ void AVRCharacter::UpdateDestinationMarker()
 	}
 }
 
+void AVRCharacter::UpdateBlinkers() //setups blinker radius based on velocity of locomotion travel based on joystick movement
+{
+	if (RadiusVsVelocity == nullptr) { return; }
+	float Speed = GetVelocity().Size();
+	float Radius = RadiusVsVelocity->GetFloatValue(Speed);
+
+	BlinkerMaterialInstance->SetScalarParameterValue(TEXT("BlinkerRadius"), Radius); //sets the blinker radius for tunnel vision
+
+	FVector2D Center = GetBlinkerCenter();
+	BlinkerMaterialInstance->SetVectorParameterValue(TEXT("Center"), FLinearColor(Center.X, Center.Y, 0));
+}
+
+FVector2D AVRCharacter::GetBlinkerCenter()
+{
+	FVector MovementDirection = GetVelocity().GetSafeNormal();
+	if (MovementDirection.IsNearlyZero())
+	{
+		return FVector2D(0.5, 0.5);
+	}
+
+	FVector WorldStationaryLocation;
+	if (FVector::DotProduct(Camera->GetForwardVector(), MovementDirection) > 0)
+	{
+		WorldStationaryLocation = Camera->GetComponentLocation() + MovementDirection * 100;
+	}
+	else
+	{
+		WorldStationaryLocation = Camera->GetComponentLocation() - MovementDirection * 100;
+	}
+	
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC == nullptr) 
+	{ 
+		return FVector2D(0.5, 0.5);
+	}
+	
+	FVector2D ScreenStationaryLocation;
+
+	PC->ProjectWorldLocationToScreen(WorldStationaryLocation, ScreenStationaryLocation);
+
+	int32 SizeX, SizeY;
+	PC->GetViewportSize(SizeX, SizeY);
+	ScreenStationaryLocation.X /= SizeX;
+	ScreenStationaryLocation.Y /= SizeY;
+
+	
+	return ScreenStationaryLocation;
+}
+
 // Called to bind functionality to input
 void AVRCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -94,7 +156,7 @@ void AVRCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 
 	// Setting up Inputs in C++ rather than Blueprint
 	PlayerInputComponent->BindAxis(TEXT("Forward"), this, &AVRCharacter::MoveForward);
-	PlayerInputComponent->BindAxis(TEXT("Right"), this, &AVRCharacter::MoveRight);
+	PlayerInputComponent->BindAxis(TEXT("Right"), this, &AVRCharacter::TurnRight);
 	PlayerInputComponent->BindAction(TEXT("Teleport"), IE_Released, this, &AVRCharacter::BeginTeleport);
 
 }
@@ -104,9 +166,9 @@ void AVRCharacter::MoveForward(float throttle)
 	AddMovementInput(throttle * Camera->GetForwardVector());
 }
 
-void AVRCharacter::MoveRight(float throttle)
+void AVRCharacter::TurnRight(float throttle)
 {
-	AddMovementInput(throttle * Camera->GetRightVector());
+	AddControllerYawInput(throttle);
 }
 
 void AVRCharacter::BeginTeleport()

@@ -36,11 +36,19 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	class UStaticMeshComponent* DestinationMarker;
 
+	UPROPERTY()
+	class UPostProcessComponent* PostProcessingComponent;
+
+	UPROPERTY()
+	class UMaterialInstanceDynamic* BlinkerMaterialInstance;
+
 	bool FindTeleportDestination(FVector &OutLocation);
 	void UpdateDestinationMarker();
+	void UpdateBlinkers();
+	FVector2D GetBlinkerCenter();
 
 	void MoveForward(float throttle);
-	void MoveRight(float throttle);
+	void TurnRight(float throttle);
 	void BeginTeleport();
 	void EndTeleport();
 
@@ -55,5 +63,11 @@ private:
 	
 	UPROPERTY(EditAnywhere)
 	FVector TeleportProjectionExtent = FVector(100, 100, 100);
+
+	UPROPERTY(EditAnywhere)
+	class UMaterialInterface* BlinkerMaterialBase;
+
+	UPROPERTY(EditAnywhere)
+	class UCurveFloat* RadiusVsVelocity;
 
 };
