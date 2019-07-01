@@ -4,12 +4,16 @@
 #include "Runtime/Engine/Classes/Camera/CameraComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SplineComponent.h"
+#include "Components/SplineMeshComponent.h"
 #include "Runtime/Engine/Public/TimerManager.h"
 #include "Components/CapsuleComponent.h"
 #include "Runtime/NavigationSystem/Public/NavigationSystem.h"
 #include "GameFramework/PlayerController.h"
 #include "Components/PostProcessComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "MotionControllerComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 
 
@@ -25,6 +29,17 @@ AVRCharacter::AVRCharacter()
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(FName("Camera"));
 	Camera->SetupAttachment(VRRoot);
+
+	LeftMController = CreateDefaultSubobject<UMotionControllerComponent>(FName("LeftMController"));
+	LeftMController->bDisplayDeviceModel = true;
+	LeftMController->SetupAttachment(VRRoot);
+
+	RightMController = CreateDefaultSubobject<UMotionControllerComponent>(FName("RightMController"));
+	RightMController->bDisplayDeviceModel = true;
+	RightMController->SetupAttachment(VRRoot);
+
+	TeleportPath = CreateDefaultSubobject<USplineComponent>(FName("TeleportPath"));
+	TeleportPath->SetupAttachment(RightMController);
 
 	DestinationMarker = CreateDefaultSubobject<UStaticMeshComponent>(FName("Marker"));
 	DestinationMarker->SetupAttachment(GetRootComponent());
@@ -45,7 +60,7 @@ void AVRCharacter::BeginPlay()
 		BlinkerMaterialInstance = UMaterialInstanceDynamic::Create(BlinkerMaterialBase, this);
 		PostProcessingComponent->AddOrUpdateBlendable(BlinkerMaterialInstance);
 	}
-	
+
 }
 
 // Called every frame
@@ -63,18 +78,26 @@ void AVRCharacter::Tick(float DeltaTime)
 }
 
 
-bool AVRCharacter::FindTeleportDestination(FVector & OutLocation)
+bool AVRCharacter::FindTeleportDestination(TArray<FVector> &OutPath, FVector & OutLocation)
 {
-	FVector Start = Camera->GetComponentLocation();
-	FVector End = Start + Camera->GetForwardVector() * MaxTeleportDistance;
+	FVector Start = RightMController->GetComponentLocation();
+	FVector Look = RightMController->GetForwardVector();
 
-	FHitResult HitResult;
-	bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility);
+	FPredictProjectilePathParams Params(TeleportProjectileRadius, Start, Look * TeleportProjectileSpeed, TeleportSimTime, ECollisionChannel(ECC_Visibility), this);
+	Params.bTraceComplex = true;
+	FPredictProjectilePathResult Results;
+
+	bool bHit = UGameplayStatics::PredictProjectilePath(this, Params, Results);
 
 	if (!bHit) return false;
 
+	for (FPredictProjectilePathPointData PointData : Results.PathData)
+	{
+		OutPath.Add(PointData.Location);
+	}
+
 	FNavLocation NavLocation;
-	bool bOnNavMesh = UNavigationSystemV1::GetNavigationSystem(GetWorld())->ProjectPointToNavigation(HitResult.Location, NavLocation, TeleportProjectionExtent);
+	bool bOnNavMesh = UNavigationSystemV1::GetNavigationSystem(GetWorld())->ProjectPointToNavigation(Results.HitResult.Location, NavLocation, TeleportProjectionExtent);
 
 	if (!bOnNavMesh) return false;
 
@@ -85,18 +108,23 @@ bool AVRCharacter::FindTeleportDestination(FVector & OutLocation)
 
 void AVRCharacter::UpdateDestinationMarker()
 {
+	TArray<FVector> Path;
 	FVector Location;
-	bool bHasDestination = FindTeleportDestination(Location);
+	bool bHasDestination = FindTeleportDestination(Path, Location);
 
 
 	if (bHasDestination)
 	{
 		DestinationMarker->SetVisibility(true);
 		DestinationMarker->SetWorldLocation(Location);
+		DrawTeleportPath(Path);
 	} 
 	else
 	{
 		DestinationMarker->SetVisibility(false);
+
+		TArray<FVector> EmptyPath;
+		DrawTeleportPath(EmptyPath);
 	}
 }
 
@@ -110,6 +138,56 @@ void AVRCharacter::UpdateBlinkers() //setups blinker radius based on velocity of
 
 	FVector2D Center = GetBlinkerCenter();
 	BlinkerMaterialInstance->SetVectorParameterValue(TEXT("Center"), FLinearColor(Center.X, Center.Y, 0));
+}
+
+void AVRCharacter::DrawTeleportPath(const TArray<FVector>& Path)
+{
+	UpdateSpline(Path);
+
+	for (USplineMeshComponent* SplineMesh : TeleportPathMeshPool)
+	{
+		SplineMesh->SetVisibility(false);
+	}
+	//Object Pool Creation
+	int32 SegmentNum = Path.Num() - 1;
+	for (int32 i = 0; i < SegmentNum; i++)
+	{
+		//New Object Building---------------------------------------------
+		if (TeleportPathMeshPool.Num() <= i)
+		{
+			USplineMeshComponent* SplineMesh = NewObject<USplineMeshComponent>(this);
+			SplineMesh->SetMobility(EComponentMobility::Movable);
+			SplineMesh->AttachToComponent(TeleportPath, FAttachmentTransformRules::KeepRelativeTransform);
+			SplineMesh->SetStaticMesh(TeleportArchMesh);
+			SplineMesh->SetMaterial(0, TeleportArchMaterial);
+			SplineMesh->RegisterComponent(); //very important for dynamic objects
+
+			TeleportPathMeshPool.Add(SplineMesh);
+		}
+
+		USplineMeshComponent* SplineMesh = TeleportPathMeshPool[i];
+		SplineMesh->SetVisibility(true);
+
+		FVector StartPos, StartTangent, EndPos, EndTangent;
+		TeleportPath->GetLocalLocationAndTangentAtSplinePoint(i, StartPos, StartTangent);
+		TeleportPath->GetLocalLocationAndTangentAtSplinePoint(i + 1, EndPos, EndTangent);
+		SplineMesh->SetStartAndEnd(StartPos, StartTangent, EndPos, EndTangent);
+
+
+	}
+}
+
+void AVRCharacter::UpdateSpline(const TArray<FVector>& Path)
+{
+	TeleportPath->ClearSplinePoints(false);
+
+	for (int32 i = 0; i < Path.Num(); ++i)
+	{
+		FVector LocalPosition = TeleportPath->GetComponentTransform().InverseTransformPosition(Path[i]); //changes spline transform from world to local
+		FSplinePoint Point(i,LocalPosition, ESplinePointType::Curve);
+		TeleportPath->AddPoint(Point, false);
+	}
+	TeleportPath->UpdateSpline();
 }
 
 FVector2D AVRCharacter::GetBlinkerCenter()
@@ -181,8 +259,9 @@ void AVRCharacter::BeginTeleport()
 
 void AVRCharacter::EndTeleport()
 {
-	SetActorLocation(DestinationMarker->GetComponentLocation() + GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
-
+	FVector Destination = DestinationMarker->GetComponentLocation();
+	Destination += GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * GetActorUpVector();
+	SetActorLocation(Destination);
 	StartFade(1, 0);
 }
 
